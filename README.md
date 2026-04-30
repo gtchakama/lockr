@@ -60,6 +60,17 @@ lockr delete --group work
 lockr delete -g work
 ```
 
+### Destroy Vault
+```bash
+# Permanently delete the vault and all stored secrets:
+lockr destroy
+
+# Skip the confirmation prompt:
+lockr destroy --force
+lockr destroy -f
+```
+*Removes `~/.lockr/` and clears the cached master password from the OS keychain. This is irreversible.*
+
 ### Export Secrets
 ```bash
 # Export a single secret:
