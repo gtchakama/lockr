@@ -2,10 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
-	"github.com/gtchakama/lockr/internal/config"
 	"github.com/gtchakama/lockr/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -28,9 +26,8 @@ var listCmd = &cobra.Command{
 	Use:   "list [group]",
 	Short: "List secrets",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := config.GetDir()
+		vaultPath, err := getVaultPath()
 		if err != nil { return err }
-		vaultPath := filepath.Join(dir, config.VaultFile)
 
 		password, err := getOrPromptPassword()
 		if err != nil { return err }

@@ -2,10 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
-	"github.com/gtchakama/lockr/internal/config"
 	"github.com/gtchakama/lockr/internal/parser"
 	"github.com/gtchakama/lockr/internal/vault"
 	"github.com/spf13/cobra"
@@ -23,9 +21,8 @@ var setCmd = &cobra.Command{
 		rawKey := args[0]
 		value := args[1]
 
-		dir, err := config.GetDir()
+		vaultPath, err := getVaultPath()
 		if err != nil { return err }
-		vaultPath := filepath.Join(dir, config.VaultFile)
 
 		password, err := getOrPromptPassword()
 		if err != nil { return err }

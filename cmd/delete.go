@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 
-	"github.com/gtchakama/lockr/internal/config"
 	"github.com/gtchakama/lockr/internal/parser"
 	"github.com/gtchakama/lockr/internal/vault"
 	"github.com/spf13/cobra"
@@ -24,9 +22,8 @@ var deleteCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rawInput := args[0]
 
-		dir, err := config.GetDir()
+		vaultPath, err := getVaultPath()
 		if err != nil { return err }
-		vaultPath := filepath.Join(dir, config.VaultFile)
 
 		password, err := getOrPromptPassword()
 		if err != nil { return err }
