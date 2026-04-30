@@ -12,7 +12,12 @@
 - **Secret Rotation Reminders:** Automatically flags secrets older than 90 days.
 - **Seamless Exporting:** Easily export single secrets or entire groups as environment variables (`eval $(lockr export work)`).
 
-## Installationnn### Option 1: Homebrew (macOS / Linux)n```bashnbrew install gtchakama/tap/lockrn```nn### Option 2: Go Install (Cross-platform)nIf you have Go installed, you can build and install directly from source:n```bashngo install github.com/gtchakama/lockr@latestn```nn### Option 3: Direct DownloadnDownload the pre-compiled binary for your OS and architecture from the [GitHub Releases](https://github.com/gtchakama/lockr/releases) page.nn
+## Installation
+
+#Option 1: 
+
+Homebrew (macOS / Linux)n```bashnbrew install gtchakama/tap/lockrn```nn### Option 2: Go Install (Cross-platform)nIf you have Go installed, you can build and install directly from source:n```bashngo install github.com/gtchakama/lockr@latestn```nn### Option 3: Direct DownloadnDownload the pre-compiled binary for your OS and architecture from the [GitHub Releases](https://github.com/gtchakama/lockr/releases) page.nn
+
 ## Usage
 
 ### Initialize Vault
