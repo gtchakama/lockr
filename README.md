@@ -7,12 +7,28 @@
 - **Local-first storage:** All secrets are kept on your machine. No cloud sync, no remote backups.
 - **Strong Encryption:** Uses AES-256-GCM for encryption and Argon2id for key derivation.
 - **Group-based organization:** Store secrets in logical groups (e.g., `work/stripe_key`).
+- **Per-project scoped vaults:** Initialize a project-level vault inside any directory. Lockr automatically prefers the nearest project vault when you run commands from within that project.
 - **OS Keychain Integration:** Caches your master password securely in your OS keychain so you don't have to type it every time.
 - **Clipboard Support:** Copy secrets directly to your clipboard to prevent shoulder surfing.
 - **Secret Rotation Reminders:** Automatically flags secrets older than 90 days.
 - **Seamless Exporting:** Easily export single secrets or entire groups as environment variables (`eval $(lockr export work)`).
 
-## Installationnn### Option 1: Homebrew (macOS / Linux)n```bashnbrew install gtchakama/tap/lockrn```nn### Option 2: Go Install (Cross-platform)nIf you have Go installed, you can build and install directly from source:n```bashngo install github.com/gtchakama/lockr@latestn```nn### Option 3: Direct DownloadnDownload the pre-compiled binary for your OS and architecture from the [GitHub Releases](https://github.com/gtchakama/lockr/releases) page.nn
+## Installation
+
+### Option 1: Homebrew (macOS / Linux)
+```bash
+brew install gtchakama/tap/lockr
+```
+
+### Option 2: Go Install (Cross-platform)
+If you have Go installed, you can build and install directly from source:
+```bash
+go install github.com/gtchakama/lockr@latest
+```
+
+### Option 3: Direct Download
+Download the pre-compiled binary for your OS and architecture from the [GitHub Releases](https://github.com/gtchakama/lockr/releases) page.
+
 ## Usage
 
 ### Initialize Vault
@@ -20,6 +36,12 @@
 lockr init
 ```
 *Prompts for a master password and initializes `~/.lockr/vault.enc`. Saves the password to your OS keychain.*
+
+### Initialize a Project-Level Vault
+```bash
+lockr init --project
+```
+*Initializes a vault in `./.lockr/vault.enc` within the current directory. When you run any `lockr` command from this directory (or any subdirectory), this project vault is used automatically instead of the global vault.*
 
 ### Lock Vault
 ```bash
@@ -62,14 +84,14 @@ lockr delete -g work
 
 ### Destroy Vault
 ```bash
-# Permanently delete the vault and all stored secrets:
+# Permanently delete the active vault and all stored secrets:
 lockr destroy
 
 # Skip the confirmation prompt:
 lockr destroy --force
 lockr destroy -f
 ```
-*Removes `~/.lockr/` and clears the cached master password from the OS keychain. This is irreversible.*
+*Removes the active vault (project-level or global) and clears the cached master password from the OS keychain. This is irreversible.*
 
 ### Export Secrets
 ```bash
@@ -80,12 +102,31 @@ eval $(lockr export work/stripe_key)
 eval $(lockr export work)
 ```
 
+## How Project Vaults Work
+
+Lockr resolves the active vault by walking up from your current working directory looking for a `.lockr/vault.enc` file. If one is found, it becomes the active vault for that command. If none is found, the global vault at `~/.lockr/vault.enc` is used.
+
+This means you can:
+- Keep personal/global secrets in `~/.lockr/vault.enc`
+- Keep project-specific secrets (e.g., API keys, database URLs) in the project's own `.lockr/vault.enc`
+- Share the project directory with teammates (they'll need the project vault password)
+- Commit `.lockr/` to `.gitignore` so it never leaks into version control
+
+Example workflow:
+```bash
+cd ~/my-project
+lockr init --project
+lockr set prod/db_password super_secret_123
+lockr get prod/db_password
+```
+
 ## Security
 
 - Passwords are never stored in plain text.
 - Vault files are encrypted using an encryption key derived from your master password using Argon2id.
 - Encryption relies on AES-256-GCM with a unique nonce for every save operation.
 - Session passwords can be securely cached in your native OS keychain and manually flushed via `lockr lock`.
+- Project vaults are completely isolated from the global vault — each has its own encryption key and ciphertext.
 
 ## Architecture
 
@@ -94,3 +135,4 @@ Built with Go and Cobra.
 - `internal/crypto`: Handles Argon2id key derivation and AES-256-GCM encryption.
 - `internal/vault`: Handles vault reading, parsing, modification, and secret metadata (timestamps).
 - `internal/parser`: Handles `group/key` namespace resolution.
+- `internal/config`: Vault path resolution — supports both global and project-level vault discovery.

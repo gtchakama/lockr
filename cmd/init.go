@@ -11,7 +11,10 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+var initProject bool
+
 func init() {
+	initCmd.Flags().BoolVarP(&initProject, "project", "p", false, "Initialize a project-level vault in the current directory")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -19,17 +22,33 @@ var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize the Lockr vault",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := config.GetDir()
-		if err != nil {
-			return err
+		var dir string
+		var err error
+
+		if initProject {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			dir = filepath.Join(cwd, config.DirName)
+		} else {
+			dir, err = config.GetDir()
+			if err != nil {
+				return err
+			}
 		}
+
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return err
 		}
 
 		vaultPath := filepath.Join(dir, config.VaultFile)
 		if _, err := os.Stat(vaultPath); err == nil {
-			fmt.Println("Vault already initialized at", vaultPath)
+			if initProject {
+				fmt.Println("Project vault already initialized at", vaultPath)
+			} else {
+				fmt.Println("Vault already initialized at", vaultPath)
+			}
 			return nil
 		}
 
@@ -52,7 +71,11 @@ var initCmd = &cobra.Command{
 		// Cache the password automatically on init
 		_ = keyring.Set(keyringService, keyringUser, password)
 
-		fmt.Println("Vault successfully initialized at", vaultPath)
+		if initProject {
+			fmt.Println("Project vault successfully initialized at", vaultPath)
+		} else {
+			fmt.Println("Vault successfully initialized at", vaultPath)
+		}
 		return nil
 	},
 }
