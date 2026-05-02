@@ -102,6 +102,18 @@ eval $(lockr export work/stripe_key)
 eval $(lockr export work)
 ```
 
+### Run a Command with Secrets Injected
+```bash
+# Inject all secrets from a group into the child process:
+lockr run work -- pnpm run dev
+lockr run backend -- cargo run
+
+# Inject a single secret:
+lockr run work/stripe_key -- bash -lc 'echo $STRIPE_KEY'
+```
+
+*`lockr run` preserves your existing environment and overlays the decrypted secret values for the spawned command only.*
+
 ## How Project Vaults Work
 
 Lockr resolves the active vault by walking up from your current working directory looking for a `.lockr/vault.enc` file. If one is found, it becomes the active vault for that command. If none is found, the global vault at `~/.lockr/vault.enc` is used.

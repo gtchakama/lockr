@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/gtchakama/lockr/internal/parser"
 	"github.com/gtchakama/lockr/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -29,26 +27,14 @@ var exportCmd = &cobra.Command{
 		v, err := vault.Load(vaultPath, password)
 		if err != nil { return err }
 
-		group, key := parser.ParseKey(rawInput)
-
-		// Check if it's a specific key
-		if groupData, groupExists := v.Data[group]; groupExists {
-			if secret, keyExists := groupData[key]; keyExists {
-				fmt.Printf("%s=%s\n", strings.ToUpper(key), secret.Value)
-				return nil
-			}
+		envVars, err := resolveEnvVars(v, rawInput)
+		if err != nil {
+			return err
 		}
 
-		// Otherwise, treat the input as a whole group (e.g. `lockr export work`)
-		// The parser sets group="default" and key="work" if input is just "work"
-		targetGroup := rawInput
-		if groupData, groupExists := v.Data[targetGroup]; groupExists {
-			for k, secret := range groupData {
-				fmt.Printf("%s=%s\n", strings.ToUpper(k), secret.Value)
-			}
-			return nil
+		for _, pair := range envPairs(envVars) {
+			fmt.Println(pair)
 		}
-
-		return fmt.Errorf("no matching key or group found")
+		return nil
 	},
 }
