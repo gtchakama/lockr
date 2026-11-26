@@ -1039,3 +1039,12 @@ func openItemT(t *testing.T, project, item string) *model.Item {
 	}
 	return it
 }
+
+func TestUnknownSubcommandExitsUsage(t *testing.T) {
+	e := setup(t)
+	for _, args := range [][]string{{"project", "bogus"}, {"skill", "nope"}} {
+		if code, _, _ := e.run("", args...); code != 64 {
+			t.Errorf("%v: exit %d, want 64", args, code)
+		}
+	}
+}

@@ -123,3 +123,8 @@ func run(args []string) int {
 func Execute() {
 	os.Exit(run(os.Args[1:]))
 }
+
+// helpOnly lets a command group validate its Args (so `lockr project bogus`
+// exits 64 instead of silently printing help) while still showing help when
+// called bare. Cobra skips Args validation on commands without a Run.
+func helpOnly(c *cobra.Command, _ []string) error { return c.Help() }

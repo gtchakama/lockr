@@ -12,7 +12,7 @@ import (
 )
 
 func newSkillCmd() *cobra.Command {
-	c := &cobra.Command{Use: "skill", Short: "Manage the agent skill", Args: usageArgs(cobra.NoArgs)}
+	c := &cobra.Command{Use: "skill", Short: "Manage the agent skill", Args: usageArgs(cobra.NoArgs), RunE: helpOnly}
 	var dir string
 	var print bool
 	install := &cobra.Command{
