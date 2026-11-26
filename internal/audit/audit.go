@@ -40,6 +40,9 @@ func Append(path string, e Entry) error {
 	return werr
 }
 
+// goos is a seam so the non-Windows-only path can be tested on any platform.
+var goos = runtime.GOOS
+
 // ParentChain returns up to 3 ancestor process names, e.g. "zsh ← claude".
 // Best effort: returns "" on any error or on Windows.
 func ParentChain() (out string) {
@@ -48,7 +51,7 @@ func ParentChain() (out string) {
 			out = ""
 		}
 	}()
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		return ""
 	}
 	pid := os.Getppid()

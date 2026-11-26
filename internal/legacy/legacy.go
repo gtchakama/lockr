@@ -34,6 +34,9 @@ type plain struct {
 	Data    map[string]map[string]json.RawMessage `json:"data"`
 }
 
+// newBlock is a seam for the AES constructor so its error path is testable.
+var newBlock = aes.NewCipher
+
 // Decrypt decrypts a v1 vault file and returns group -> key -> secret.
 func Decrypt(data, password []byte) (map[string]map[string]Secret, error) {
 	var f file
@@ -47,7 +50,7 @@ func Decrypt(data, password []byte) (map[string]map[string]Secret, error) {
 		return nil, errors.New("not a v1 vault: bad base64")
 	}
 	key := argon2.IDKey(password, salt, 1, 64*1024, 4, 32)
-	block, err := aes.NewCipher(key)
+	block, err := newBlock(key)
 	if err != nil {
 		return nil, err
 	}
