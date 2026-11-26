@@ -1,150 +1,101 @@
 # Lockr
 
-**Lockr** is a local-first CLI tool for securely storing, organizing, and retrieving API keys and secrets using strong encryption. It eliminates reliance on cloud-based secret managers for individual developers and small teams by keeping all data encrypted and stored locally.
+Lockr is a local, encrypted CLI vault for developers and their AI agents. It keeps logins, API keys and TOTP seeds in one encrypted file and hands them to programs through pipes, so the values never have to appear on your screen or in an agent's context.
 
-## Features
+- One global vault (`~/.lockr/vault.lockr`, override with `$LOCKR_VAULT`)
+- Named projects containing items of kind `login` or `secret`
+- A human unlocks a time-limited session; agents use it without ever seeing values
 
-- **Local-first storage:** All secrets are kept on your machine. No cloud sync, no remote backups.
-- **Strong Encryption:** Uses AES-256-GCM for encryption and Argon2id for key derivation.
-- **Group-based organization:** Store secrets in logical groups (e.g., `work/stripe_key`).
-- **Per-project scoped vaults:** Initialize a project-level vault inside any directory. Lockr automatically prefers the nearest project vault when you run commands from within that project.
-- **OS Keychain Integration:** Caches your master password securely in your OS keychain so you don't have to type it every time.
-- **Clipboard Support:** Copy secrets directly to your clipboard to prevent shoulder surfing.
-- **Secret Rotation Reminders:** Automatically flags secrets older than 90 days.
-- **Seamless Exporting:** Easily export single secrets or entire groups as environment variables (`eval $(lockr export work)`).
+## Install
 
-## Installation
-
-### Option 1: Homebrew (macOS / Linux)
-```bash
+```sh
 brew install gtchakama/tap/lockr
-```
-
-### Option 2: Go Install (Cross-platform)
-If you have Go installed, you can build and install directly from source:
-```bash
+# or
 go install github.com/gtchakama/lockr@latest
 ```
 
-### Option 3: Direct Download
-Download the pre-compiled binary for your OS and architecture from the [GitHub Releases](https://github.com/gtchakama/lockr/releases) page.
+## Quickstart
 
-## Usage
-
-### Initialize Vault
-```bash
-lockr init
-```
-*Prompts for a master password and initializes `~/.lockr/vault.enc`. Saves the password to your OS keychain.*
-
-### Initialize a Project-Level Vault
-```bash
-lockr init --project
-```
-*Initializes a vault in `./.lockr/vault.enc` within the current directory. When you run any `lockr` command from this directory (or any subdirectory), this project vault is used automatically instead of the global vault.*
-
-### Lock Vault
-```bash
-lockr lock
-```
-*Removes the cached master password from the OS keychain, requiring you to type it again on the next command.*
-
-### Store a Secret
-```bash
-lockr set work/stripe_key sk_test_123
-lockr set github_token ghp_xxx
-```
-*(If no group is provided, it defaults to the `default` group).*
-
-### Retrieve a Secret
-```bash
-lockr get work/stripe_key
-
-# Or copy directly to clipboard without printing to terminal:
-lockr get work/stripe_key --copy
-lockr get work/stripe_key -c
+```sh
+lockr init                                   # create the vault, set a master password
+lockr project new acme
+lockr add acme/api --kind secret --env ACME_API_KEY
+lockr add acme/site --kind login --url https://acme.com --username me --totp
+lockr unlock                                 # human only, TTY required (default 8h)
+lockr list acme
+curl -H "Authorization: Bearer $(lockr get acme/api)" https://api.acme.com/me
+lockr get acme/api | gh secret set ACME_API_KEY
+lockr run acme -- ./deploy.sh                # items with --env become env vars
 ```
 
-### List Secrets
-```bash
-lockr list
-lockr list work
+## Reference grammar
+
 ```
-*Note: Passwords are automatically masked. Secrets older than 90 days will show a warning.*
-
-### Delete Secrets
-```bash
-# Delete a single secret:
-lockr delete work/stripe_key
-
-# Delete an entire group:
-lockr delete --group work
-lockr delete -g work
+<project>/<item>[.password|.username|.url|.totp]
 ```
 
-### Destroy Vault
-```bash
-# Permanently delete the active vault and all stored secrets:
-lockr destroy
+`secret` items have a single value (`<project>/<item>`). `login` items expose the fields above; a bare `<project>/<item>` on a login means `.password`.
 
-# Skip the confirmation prompt:
-lockr destroy --force
-lockr destroy -f
+## Commands
+
+| Command | Description |
+|---|---|
+| `init` | Create the vault |
+| `unlock [--ttl 8h]` | Open a session (TTY only); DEK cached in the OS keychain |
+| `lock` | End the session |
+| `status` | Show locked/unlocked and expiry |
+| `project new\|list\|rm` | Manage projects |
+| `add <ref> --kind --url --username --env --totp --stdin` | Add an item (`--stdin` reads the value from stdin) |
+| `edit <ref>` | Edit an item |
+| `rm <ref>` | Remove an item |
+| `mv <ref> <ref>` | Rename or move an item |
+| `list [project]` | List names (never values) |
+| `get <ref> [--reveal]` | Print the raw value to stdout, no newline. Refuses on a TTY unless `--reveal` |
+| `run <project> -- <cmd>` | Run a command with the project's env vars |
+| `passwd` | Change the master password |
+| `skill install` | Install the agent skill |
+| `import-v1` | Import a Lockr v1 vault |
+| `destroy` | Delete the vault |
+
+Exit codes: `3` locked, `4` not found, `5` refused (stdout is a TTY), `64` usage.
+
+## Using with AI agents
+
+Run `lockr skill install` to teach your agent the rules (see `skill/SKILL.md`). The model:
+
+1. You run `lockr unlock` in a terminal. Agents cannot: it requires a TTY and your password.
+2. The agent discovers refs with `lockr list` (names only).
+3. The agent uses `lockr get` only inside `$(...)` or a pipe, so the value goes from Lockr to the consuming program and never into the transcript. `get` refuses when stdout is a terminal.
+4. If the vault is locked (exit 3) the agent stops and asks you to unlock. When the session expires, access ends.
+
+## Security model
+
+- Master password -> Argon2id (m=256 MiB, t=3, p=1) -> KEK that wraps a random DEK.
+- Items are encrypted with XChaCha20-Poly1305; the file header is bound as AAD.
+- Writes are atomic with a `.bak` of the previous version; files are mode 0600.
+- Sessions cache the DEK in the OS keychain with a fixed TTL (no sliding renewal).
+- Every access is recorded in `~/.lockr/audit.jsonl`: time, command, ref, parent process chain and cwd. Refs are logged, never values.
+
+Honest limits: Lockr cannot stop an agent that deliberately prints a value (for example `echo "$(lockr get x/y)"`) or a program that leaks its own credentials. It also cannot protect against malware running as you while the session is open. It makes accidental leakage hard and deliberate leakage visible in the audit log.
+
+## Migrating from v1
+
+v2 is a breaking change: per-project vaults are removed in favor of one global vault with projects. Import an old vault with:
+
+```sh
+lockr import-v1 path/to/old-vault
 ```
-*Removes the active vault (project-level or global) and clears the cached master password from the OS keychain. This is irreversible.*
 
-### Export Secrets
-```bash
-# Export a single secret:
-eval $(lockr export work/stripe_key)
-
-# Export an entire group:
-eval $(lockr export work)
-```
-
-### Run a Command with Secrets Injected
-```bash
-# Inject all secrets from a group into the child process:
-lockr run work -- pnpm run dev
-lockr run backend -- cargo run
-
-# Inject a single secret:
-lockr run work/stripe_key -- bash -lc 'echo $STRIPE_KEY'
-```
-
-*`lockr run` preserves your existing environment and overlays the decrypted secret values for the spawned command only.*
-
-## How Project Vaults Work
-
-Lockr resolves the active vault by walking up from your current working directory looking for a `.lockr/vault.enc` file. If one is found, it becomes the active vault for that command. If none is found, the global vault at `~/.lockr/vault.enc` is used.
-
-This means you can:
-- Keep personal/global secrets in `~/.lockr/vault.enc`
-- Keep project-specific secrets (e.g., API keys, database URLs) in the project's own `.lockr/vault.enc`
-- Share the project directory with teammates (they'll need the project vault password)
-- Commit `.lockr/` to `.gitignore` so it never leaks into version control
-
-Example workflow:
-```bash
-cd ~/my-project
-lockr init --project
-lockr set prod/db_password super_secret_123
-lockr get prod/db_password
-```
-
-## Security
-
-- Passwords are never stored in plain text.
-- Vault files are encrypted using an encryption key derived from your master password using Argon2id.
-- Encryption relies on AES-256-GCM with a unique nonce for every save operation.
-- Session passwords can be securely cached in your native OS keychain and manually flushed via `lockr lock`.
-- Project vaults are completely isolated from the global vault — each has its own encryption key and ciphertext.
+Groups become projects and keys become `secret` items.
 
 ## Architecture
 
-Built with Go and Cobra.
-- `cmd/`: CLI routing, commands, and OS keychain integration.
-- `internal/crypto`: Handles Argon2id key derivation and AES-256-GCM encryption.
-- `internal/vault`: Handles vault reading, parsing, modification, and secret metadata (timestamps).
-- `internal/parser`: Handles `group/key` namespace resolution.
-- `internal/config`: Vault path resolution — supports both global and project-level vault discovery.
+- `cmd/` - Cobra CLI commands
+- `internal/vault` - encrypted file format, locking, atomic persistence
+- `internal/model` - projects, items, ref parsing
+- `internal/crypto` - Argon2id, key wrapping, XChaCha20-Poly1305
+- `internal/session` - DEK cache in the OS keychain with TTL
+- `internal/audit` - append-only audit log
+- `internal/totp` - TOTP code generation
+- `internal/legacy` - v1 vault decryption for migration
+- `skill/` - embedded agent skill

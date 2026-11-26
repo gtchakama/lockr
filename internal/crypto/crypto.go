@@ -1,68 +1,95 @@
-// Package crypto encapsulates all cryptographic operations for Lockr,
-// including key derivation (Argon2) and symmetric encryption (AES-256-GCM).
+// Package crypto holds Lockr's primitives: Argon2id key derivation and
+// XChaCha20-Poly1305 authenticated encryption. Callers own key lifetimes and
+// should Zero keys when done.
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
-	"io"
+	"errors"
+	"fmt"
+
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// GenerateSalt returns a cryptographically secure random 16-byte salt.
-// This is used alongside the user's master password to derive the encryption key.
-func GenerateSalt() ([]byte, error) {
-	salt := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		return nil, err
+// KeySize is the size of every symmetric key (KEK and DEK).
+const KeySize = chacha20poly1305.KeySize
+
+// NonceSize is the XChaCha20-Poly1305 nonce size; 192 bits makes random
+// nonces safe for the lifetime of a vault.
+const NonceSize = chacha20poly1305.NonceSizeX
+
+// Overhead is the authentication tag size.
+const Overhead = chacha20poly1305.Overhead
+
+// SaltSize is the Argon2id salt size.
+const SaltSize = 16
+
+// KDFParams are Argon2id cost parameters. Memory is in KiB.
+type KDFParams struct {
+	Memory  uint32
+	Time    uint32
+	Threads uint8
+}
+
+// DefaultKDF follows RFC 9106's second recommended option (256 MiB, t=3).
+var DefaultKDF = KDFParams{Memory: 256 * 1024, Time: 3, Threads: 1}
+
+// Validate rejects parameters too weak to be accepted from a vault header,
+// which stops a tampered header from silently downgrading the KDF.
+func (p KDFParams) Validate() error {
+	if p.Memory < 8*1024 || p.Time < 1 || p.Threads < 1 {
+		return fmt.Errorf("KDF parameters too weak: m=%dKiB t=%d p=%d", p.Memory, p.Time, p.Threads)
 	}
-	return salt, nil
+	return nil
 }
 
-// DeriveKey derives a 32-byte encryption key from a master password and salt.
-// It uses Argon2id, which is resistant to both GPU and side-channel attacks.
-func DeriveKey(password string, salt []byte) []byte {
-	// Parameters: time=1, memory=64MB, threads=4, keyLen=32 bytes
-	return argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
+// DeriveKEK derives the key-encryption key from a password and salt.
+func DeriveKEK(password, salt []byte, p KDFParams) []byte {
+	return argon2.IDKey(password, salt, p.Time, p.Memory, p.Threads, KeySize)
 }
 
-// Encrypt secures the given plaintext using AES-256-GCM.
-// It returns the resulting ciphertext and the randomly generated nonce used,
-// both of which must be saved to decrypt the data later.
-func Encrypt(key, plaintext []byte) ([]byte, []byte, error) {
-	block, err := aes.NewCipher(key)
+// Random returns n cryptographically random bytes.
+func Random(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("reading randomness: %w", err)
+	}
+	return b, nil
+}
+
+// ErrAuth means ciphertext failed authentication: wrong key or tampering.
+var ErrAuth = errors.New("authentication failed")
+
+// Seal encrypts plaintext under key with a fresh random nonce, binding aad.
+func Seal(key, plaintext, aad []byte) (nonce, ciphertext []byte, err error) {
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
+	if nonce, err = Random(NonceSize); err != nil {
 		return nil, nil, err
 	}
-	
-	// Generate a random nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, nil, err
-	}
-	
-	// Seal encrypts and authenticates the plaintext
-	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
-	return ciphertext, nonce, nil
+	return nonce, aead.Seal(nil, nonce, plaintext, aad), nil
 }
 
-// Decrypt opens and authenticates AES-256-GCM ciphertext.
-// It requires the correct 32-byte key and the exact nonce used during encryption.
-func Decrypt(key, nonce, ciphertext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
+// Open decrypts and authenticates ciphertext.
+func Open(key, nonce, ciphertext, aad []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
+	pt, err := aead.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
-		return nil, err
+		return nil, ErrAuth
 	}
-	
-	// Open decrypts and verifies the ciphertext
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	return pt, nil
+}
+
+// Zero overwrites b. Go may still hold copies; this limits, not eliminates,
+// how long key material stays in memory.
+func Zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
