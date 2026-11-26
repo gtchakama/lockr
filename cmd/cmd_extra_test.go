@@ -279,7 +279,7 @@ func TestInit(t *testing.T) {
 	}
 	e.inTTY = true
 	e.expect(codeUsage, "", "init", "extra")
-	e.passwords = []string{"short"}
+	e.passwords = []string{""}
 	e.expect(codeGeneric, "", "init")
 	e.passwords = []string{testPW, "different password!!"}
 	e.expect(codeGeneric, "", "init")
