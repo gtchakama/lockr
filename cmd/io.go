@@ -63,15 +63,20 @@ func requireTTY(what string) error {
 	return nil
 }
 
-// newPassword prompts twice and enforces the minimum length.
+// newPassword prompts twice. Short passwords are allowed (the vault is yours)
+// but warned about, because the Argon2id cost only slows guessing; it can't
+// save a weak password if vault.lockr is ever copied off the machine.
 func newPassword(label string) ([]byte, error) {
 	pw, err := readPassword(label + ": ")
 	if err != nil {
 		return nil, err
 	}
-	if len([]rune(string(pw))) < minPasswordLen {
-		crypto.Zero(pw)
-		return nil, fmt.Errorf("password must be at least %d characters", minPasswordLen)
+	if len(pw) == 0 {
+		return nil, errors.New("password cannot be empty")
+	}
+	if n := len([]rune(string(pw))); n < minPasswordLen {
+		fmt.Fprintf(stderr, "warning: %d-character password; %d+ is recommended. "+
+			"Anyone who copies vault.lockr can try guesses offline.\n", n, minPasswordLen)
 	}
 	again, err := readPassword("Repeat " + strings.ToLower(label) + ": ")
 	if err != nil {

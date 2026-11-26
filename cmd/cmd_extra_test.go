@@ -142,16 +142,38 @@ func TestNewPassword(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("too short", func(t *testing.T) {
-		setup(t).passwords = []string{"short"}
-		if _, err := newPassword("x"); err == nil || !strings.Contains(err.Error(), "at least 12") {
+	t.Run("empty rejected", func(t *testing.T) {
+		setup(t).passwords = []string{""}
+		if _, err := newPassword("x"); err == nil || !strings.Contains(err.Error(), "empty") {
 			t.Fatal(err)
+		}
+	})
+	t.Run("short allowed with warning", func(t *testing.T) {
+		setup(t).passwords = []string{"short", "short"}
+		var w bytes.Buffer
+		stderr = &w
+		pw, err := newPassword("x")
+		if err != nil || string(pw) != "short" {
+			t.Fatalf("pw=%q err=%v", pw, err)
+		}
+		if !strings.Contains(w.String(), "warning: 5-character") {
+			t.Fatalf("no warning: %q", w.String())
 		}
 	})
 	t.Run("short counts characters not bytes", func(t *testing.T) {
 		setup(t).passwords = []string{"ééééééééééé", "ééééééééééé"} // 11 runes, 22 bytes
-		if _, err := newPassword("x"); err == nil {
-			t.Fatal("11 runes accepted")
+		var w bytes.Buffer
+		stderr = &w
+		if _, err := newPassword("x"); err != nil || !strings.Contains(w.String(), "11-character") {
+			t.Fatalf("err=%v warn=%q", err, w.String())
+		}
+	})
+	t.Run("long enough no warning", func(t *testing.T) {
+		setup(t).passwords = []string{long, long}
+		var w bytes.Buffer
+		stderr = &w
+		if _, err := newPassword("x"); err != nil || w.Len() != 0 {
+			t.Fatalf("err=%v warn=%q", err, w.String())
 		}
 	})
 	t.Run("repeat read fails", func(t *testing.T) {
@@ -369,7 +391,7 @@ func TestPasswd(t *testing.T) {
 	e.passwords = []string{"wrong current pw!"}
 	e.expect(codeGeneric, "", "passwd")
 
-	e.passwords = []string{testPW, "tiny"}
+	e.passwords = []string{testPW, ""}
 	e.expect(codeGeneric, "", "passwd")
 
 	queued := readPassword
