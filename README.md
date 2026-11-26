@@ -53,7 +53,8 @@ lockr run acme -- ./deploy.sh                # items with --env become env vars
 | `get <ref> [--reveal]` | Print the raw value to stdout, no newline. Refuses on a TTY unless `--reveal` |
 | `run <project> -- <cmd>` | Run a command with the project's env vars |
 | `passwd` | Change the master password |
-| `skill install` | Install the agent skill |
+| `skill install [--all] [--agent ids] [--copy] [--dir] [--print]` | Install the agent skill for the coding agents on this machine (interactive checklist on a terminal) |
+| `skill list` / `skill uninstall` | Show which agents have it / remove it everywhere |
 | `import-v1` | Import a Lockr v1 vault |
 | `destroy` | Delete the vault |
 
@@ -61,7 +62,9 @@ Exit codes: `3` locked, `4` not found, `5` refused (stdout is a TTY), `64` usage
 
 ## Using with AI agents
 
-Run `lockr skill install` to teach your agent the rules (see `skill/SKILL.md`). The model:
+Run `lockr skill install` to teach your agents the rules (see `skill/SKILL.md`). It detects the coding agents on your machine (Claude Code, Codex, Gemini CLI, Antigravity, Cursor, OpenCode, Copilot, Windsurf, Kiro, Factory, Goose, Pi, Grok) and shows a checklist with all of them selected. One copy is written to `~/.agents/skills/lockr/SKILL.md` and each selected agent gets a symlink to it, so updating Lockr and re-running the install updates every agent at once. Use `--all` or `--agent claude,codex` in scripts.
+
+The model:
 
 1. You run `lockr unlock` in a terminal. Agents cannot: it requires a TTY and your password.
 2. The agent discovers refs with `lockr list` (names only).

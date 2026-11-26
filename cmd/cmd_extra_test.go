@@ -895,7 +895,7 @@ func TestSkillInstall(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.dir, ".claude")); err == nil {
 		t.Fatal("--print must not write")
 	}
-	e.must("", "skill", "install") // default ~/.claude/skills/lockr under HOME
+	e.must("", "skill", "install", "--agent", "claude")
 	b, err := os.ReadFile(filepath.Join(e.dir, ".claude", "skills", "lockr", "SKILL.md"))
 	if err != nil || string(b) != out {
 		t.Fatalf("installed content differs: %v", err)
@@ -920,7 +920,7 @@ func TestSkillInstallFailures(t *testing.T) {
 	}
 	e.expect(codeGeneric, "", "skill", "install", "--dir", d)
 	t.Setenv("HOME", "")
-	e.expect(codeGeneric, "", "skill", "install")
+	e.expect(codeGeneric, "", "skill", "install", "--all")
 	code, errs := e.runIO(strings.NewReader(""), failWriter{}, "skill", "install", "--print")
 	if code != codeGeneric || !strings.Contains(errs, "write failed") {
 		t.Fatalf("%d %q", code, errs)
@@ -1069,4 +1069,101 @@ func TestUnknownSubcommandExitsUsage(t *testing.T) {
 			t.Errorf("%v: exit %d, want 64", args, code)
 		}
 	}
+}
+
+func mkAgentDirs(t *testing.T, home string, roots ...string) {
+	t.Helper()
+	for _, r := range roots {
+		if err := os.MkdirAll(filepath.Join(home, r), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSkillInstallDetectsAndLinks(t *testing.T) {
+	e := setup(t)
+	mkAgentDirs(t, e.dir, ".claude", ".codex", ".cursor")
+
+	// Not a terminal and no selection flags: refuse rather than guess.
+	e.expect(codeUsage, "", "skill", "install")
+
+	out := e.must("", "skill", "install", "--all")
+	canon := filepath.Join(e.dir, ".agents", "skills", "lockr", "SKILL.md")
+	want, err := os.ReadFile(canon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []string{".claude", ".codex", ".cursor"} {
+		link := filepath.Join(e.dir, a, "skills", "lockr")
+		if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s: not a symlink (%v)", a, err)
+		}
+		got, err := os.ReadFile(filepath.Join(link, "SKILL.md"))
+		if err != nil || string(got) != string(want) {
+			t.Fatalf("%s: content via link differs: %v", a, err)
+		}
+	}
+	if strings.Contains(out, "Gemini") {
+		t.Fatalf("undetected agent installed: %s", out)
+	}
+
+	// Re-running is idempotent and reports existing links.
+	if out := e.must("", "skill", "install", "--all"); !strings.Contains(out, "already linked") {
+		t.Fatalf("rerun: %s", out)
+	}
+
+	list := e.must("", "skill", "list")
+	if !strings.Contains(list, "claude") || !strings.Contains(list, "installed") || !strings.Contains(list, "not detected") {
+		t.Fatalf("list: %s", list)
+	}
+
+	e.must("", "skill", "uninstall")
+	for _, p := range []string{canon, filepath.Join(e.dir, ".claude", "skills", "lockr")} {
+		if _, err := os.Lstat(p); err == nil {
+			t.Fatalf("%s still exists", p)
+		}
+	}
+}
+
+func TestSkillInstallCopyAndUnknownAgent(t *testing.T) {
+	e := setup(t)
+	e.expect(codeUsage, "", "skill", "install", "--agent", "nope")
+	e.must("", "skill", "install", "--agent", "codex", "--copy")
+	fi, err := os.Lstat(filepath.Join(e.dir, ".codex", "skills", "lockr"))
+	if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("expected a copied directory: %v", err)
+	}
+	// No agents detected at all.
+	e2 := setup(t)
+	if out := e2.must("", "skill", "install", "--all"); !strings.Contains(out, "No coding agents detected") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestSkillInstallInteractivePicker(t *testing.T) {
+	e := setup(t)
+	mkAgentDirs(t, e.dir, ".claude", ".codex", ".cursor")
+	e.inTTY = true
+	// Detected order follows the registry: Claude(1), Codex(2), Cursor(3).
+	// Toggle off 2, try junk, then confirm.
+	out := e.must("2\nx 9\n\n", "skill", "install")
+	if !strings.Contains(out, "Ignoring") {
+		t.Fatalf("junk not reported: %s", out)
+	}
+	if _, err := os.Lstat(filepath.Join(e.dir, ".codex", "skills", "lockr")); err == nil {
+		t.Fatal("deselected agent was installed")
+	}
+	for _, a := range []string{".claude", ".cursor"} {
+		if _, err := os.Stat(filepath.Join(e.dir, a, "skills", "lockr", "SKILL.md")); err != nil {
+			t.Fatalf("%s not installed: %v", a, err)
+		}
+	}
+	// none, then confirm: nothing selected.
+	if out := e.must("n\n\n", "skill", "install"); !strings.Contains(out, "Nothing selected") {
+		t.Fatalf("%s", out)
+	}
+	// all after none works; q cancels; EOF cancels.
+	e.must("n\na\n\n", "skill", "install")
+	e.expect(codeGeneric, "q\n", "skill", "install")
+	e.expect(codeGeneric, "", "skill", "install")
 }
