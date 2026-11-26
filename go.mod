@@ -3,7 +3,6 @@ module github.com/gtchakama/lockr
 go 1.26.1
 
 require (
-	github.com/atotto/clipboard v0.1.4
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.50.0
