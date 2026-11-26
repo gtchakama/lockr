@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -52,6 +53,8 @@ var (
 	ErrLegacy        = errors.New("this is a Lockr v1 vault: run `lockr import-v1` to migrate it")
 	ErrPermissions   = errors.New("vault file is readable by other users: run `chmod 600` on it")
 )
+
+var randBytes = crypto.Random
 
 // ID identifies a vault; sessions are keyed by it.
 type ID [idSize]byte
@@ -113,17 +116,22 @@ func (s *Sealed) Path() string { return s.path }
 
 // Read loads and parses a vault file without decrypting it.
 func Read(path string) (*Sealed, error) {
-	info, err := os.Stat(path)
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNoVault
 	}
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return nil, ErrPermissions
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -136,22 +144,28 @@ func Read(path string) (*Sealed, error) {
 }
 
 func parse(data []byte) (*Sealed, error) {
-	if len(bytes.TrimSpace(data)) > 0 && bytes.TrimSpace(data)[0] == '{' {
+	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '{' {
 		return nil, ErrLegacy
 	}
-	if len(data) < minFileSize || string(data[:len(magic)]) != magic {
+	if len(data) < len(magic)+1 || string(data[:len(magic)]) != magic {
 		return nil, errors.New("not a Lockr vault file")
 	}
 	if v := data[len(magic)]; v != version {
 		return nil, fmt.Errorf("unsupported vault version %d", v)
 	}
+	if len(data) < minFileSize {
+		return nil, errors.New("not a Lockr vault file: truncated file")
+	}
 	off := len(magic) + 1
 	var h header
 	copy(h.id[:], data[off:off+idSize])
 	off += idSize
-	h.kdf.Memory = binary.BigEndian.Uint32(data[off:])
-	h.kdf.Time = binary.BigEndian.Uint32(data[off+4:])
+	h.kdf.Memory = binary.BigEndian.Uint32(data[off : off+4])
+	h.kdf.Time = binary.BigEndian.Uint32(data[off+4 : off+8])
 	h.kdf.Threads = data[off+8]
+	if data[off+9] != 0 || data[off+10] != 0 || data[off+11] != 0 {
+		return nil, errors.New("corrupted vault header: non-zero padding")
+	}
 	off += kdfSize
 	h.salt = clone(data[off : off+crypto.SaltSize])
 	off += crypto.SaltSize
@@ -217,39 +231,53 @@ func (u *Unlocked) ID() ID { return u.hdr.id }
 // DEK returns a copy of the data key for caching in a session.
 func (u *Unlocked) DEK() []byte { return clone(u.dek) }
 
-// Close zeroes the data key.
-func (u *Unlocked) Close() { crypto.Zero(u.dek) }
+// Close zeroes the data key and prevents further saves on this handle.
+func (u *Unlocked) Close() {
+	crypto.Zero(u.dek)
+	u.dek = nil
+}
 
 // Create makes a new vault at path. It fails if one already exists.
 func Create(path string, password []byte, kdf crypto.KDFParams) (*Unlocked, error) {
 	if _, err := os.Stat(path); err == nil {
 		return nil, ErrExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
 	if err := kdf.Validate(); err != nil {
 		return nil, err
 	}
-	idb, err := crypto.Random(idSize)
+	idb, err := randBytes(idSize)
 	if err != nil {
 		return nil, err
 	}
-	dek, err := crypto.Random(crypto.KeySize)
+	dek, err := randBytes(crypto.KeySize)
 	if err != nil {
 		return nil, err
 	}
 	u := &Unlocked{path: path, dek: dek, Body: model.NewBody()}
 	copy(u.hdr.id[:], idb)
 	if err := u.wrap(password, kdf); err != nil {
+		u.Close()
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
+		u.Close()
 		return nil, err
 	}
-	return u, u.Save()
+	if err := u.Save(); err != nil {
+		u.Close()
+		return nil, err
+	}
+	return u, nil
 }
 
 // wrap derives a new KEK from password with a fresh salt and re-wraps the DEK.
 func (u *Unlocked) wrap(password []byte, kdf crypto.KDFParams) error {
-	salt, err := crypto.Random(crypto.SaltSize)
+	if len(u.dek) != crypto.KeySize {
+		return errors.New("vault is closed")
+	}
+	salt, err := randBytes(crypto.SaltSize)
 	if err != nil {
 		return err
 	}
@@ -269,15 +297,23 @@ func (u *Unlocked) ChangePassword(password []byte, kdf crypto.KDFParams) error {
 	if err := kdf.Validate(); err != nil {
 		return err
 	}
+	prev := u.hdr
 	if err := u.wrap(password, kdf); err != nil {
 		return err
 	}
-	return u.Save()
+	if err := u.Save(); err != nil {
+		u.hdr = prev
+		return err
+	}
+	return nil
 }
 
 // Save encrypts the body with a fresh nonce and writes the file atomically,
 // keeping the previous version as <path>.bak.
 func (u *Unlocked) Save() error {
+	if len(u.dek) != crypto.KeySize {
+		return errors.New("vault is closed")
+	}
 	pt, err := json.Marshal(u.Body)
 	if err != nil {
 		return err
@@ -294,32 +330,22 @@ func (u *Unlocked) Save() error {
 }
 
 func writeAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
 	if old, err := os.ReadFile(path); err == nil {
-		if err := writeFileSync(path+".bak", old); err != nil {
+		if err := writeAtomicFile(path+".bak", old); err != nil {
 			return fmt.Errorf("writing backup: %w", err)
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading existing vault: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := writeFileSync(tmp, data); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
-	return nil
+	return writeAtomicFile(path, data)
 }
 
-func writeFileSync(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fileMode)
-	if err != nil {
-		return err
-	}
+type syncWriteCloser interface {
+	io.WriteCloser
+	Sync() error
+}
+
+func writeSyncClose(f syncWriteCloser, data []byte) error {
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		return err
@@ -328,10 +354,32 @@ func writeFileSync(path string, data []byte) error {
 		_ = f.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
+	return f.Close()
+}
+
+func writeAtomicFile(path string, data []byte) (err error) {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, fileMode)
+	tmp := f.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err = writeSyncClose(f, data); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if d, derr := os.Open(dir); derr == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 func clone(b []byte) []byte { return append([]byte(nil), b...) }

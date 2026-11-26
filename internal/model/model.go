@@ -168,7 +168,7 @@ func (b *Body) Item(r Ref) (*Item, error) {
 		return nil, fmt.Errorf("project %q %w", r.Project, ErrNotFound)
 	}
 	it, ok := items[r.Item]
-	if !ok {
+	if !ok || it == nil {
 		return nil, fmt.Errorf("item %q in project %q %w", r.Item, r.Project, ErrNotFound)
 	}
 	return it, nil

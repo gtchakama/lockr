@@ -17,10 +17,12 @@ const (
 	digits = 6
 )
 
+var seedSpaceReplacer = strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "")
+
 // DecodeSeed normalises and decodes a base32 seed as shown by websites
-// (spaces, lower case and missing padding are accepted).
+// (whitespace, lower case and missing padding are accepted).
 func DecodeSeed(seed string) ([]byte, error) {
-	s := strings.ToUpper(strings.ReplaceAll(seed, " ", ""))
+	s := strings.ToUpper(seedSpaceReplacer.Replace(seed))
 	s = strings.TrimRight(s, "=")
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(s)
 	if err != nil || len(key) == 0 {
@@ -31,11 +33,16 @@ func DecodeSeed(seed string) ([]byte, error) {
 
 // Code returns the 6-digit code for the given seed at time t.
 func Code(seed string, t time.Time) (string, error) {
+	unix := t.Unix()
+	if unix < 0 {
+		return "", fmt.Errorf("invalid timestamp before Unix epoch")
+	}
 	key, err := DecodeSeed(seed)
 	if err != nil {
 		return "", err
 	}
-	return codeAt(key, uint64(t.Unix())/step), nil
+	defer clear(key)
+	return codeAt(key, uint64(unix)/step), nil
 }
 
 func codeAt(key []byte, counter uint64) string {

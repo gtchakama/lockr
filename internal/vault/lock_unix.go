@@ -5,9 +5,12 @@
 package vault
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
+
+var flock = syscall.Flock
 
 // Lock takes an exclusive advisory lock on <path>.lock and returns a release
 // function. Readers do not lock: writes are atomic renames.
@@ -16,12 +19,18 @@ func Lock(path string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	for {
+		err = flock(int(f.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	}, nil
 }

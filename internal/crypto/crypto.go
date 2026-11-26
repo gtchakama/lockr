@@ -7,10 +7,13 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
+
+var randReader io.Reader = rand.Reader
 
 // KeySize is the size of every symmetric key (KEK and DEK).
 const KeySize = chacha20poly1305.KeySize
@@ -35,11 +38,23 @@ type KDFParams struct {
 // DefaultKDF follows RFC 9106's second recommended option (256 MiB, t=3).
 var DefaultKDF = KDFParams{Memory: 256 * 1024, Time: 3, Threads: 1}
 
-// Validate rejects parameters too weak to be accepted from a vault header,
-// which stops a tampered header from silently downgrading the KDF.
+const (
+	minKDFMemory  = 8 * 1024
+	maxKDFMemory  = 2 * 1024 * 1024 // 2 GiB (RFC 9106 high-memory option)
+	minKDFTime    = 1
+	maxKDFTime    = 64
+	minKDFThreads = 1
+	maxKDFThreads = 64
+)
+
+// Validate rejects parameters too weak (downgrade) or too large (DoS) to be
+// accepted from a vault header or passed to vault creation.
 func (p KDFParams) Validate() error {
-	if p.Memory < 8*1024 || p.Time < 1 || p.Threads < 1 {
+	if p.Memory < minKDFMemory || p.Time < minKDFTime || p.Threads < minKDFThreads {
 		return fmt.Errorf("KDF parameters too weak: m=%dKiB t=%d p=%d", p.Memory, p.Time, p.Threads)
+	}
+	if p.Memory > maxKDFMemory || p.Time > maxKDFTime || p.Threads > maxKDFThreads {
+		return fmt.Errorf("KDF parameters exceed maximum: m=%dKiB t=%d p=%d", p.Memory, p.Time, p.Threads)
 	}
 	return nil
 }
@@ -51,8 +66,11 @@ func DeriveKEK(password, salt []byte, p KDFParams) []byte {
 
 // Random returns n cryptographically random bytes.
 func Random(n int) ([]byte, error) {
+	if n < 0 {
+		return nil, fmt.Errorf("invalid random length %d", n)
+	}
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := io.ReadFull(randReader, b); err != nil {
 		return nil, fmt.Errorf("reading randomness: %w", err)
 	}
 	return b, nil
@@ -75,6 +93,9 @@ func Seal(key, plaintext, aad []byte) (nonce, ciphertext []byte, err error) {
 
 // Open decrypts and authenticates ciphertext.
 func Open(key, nonce, ciphertext, aad []byte) ([]byte, error) {
+	if len(nonce) != NonceSize {
+		return nil, fmt.Errorf("invalid nonce length %d: want %d", len(nonce), NonceSize)
+	}
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, err
